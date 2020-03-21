@@ -68,9 +68,36 @@ void CommandHandler(std::promise<Action>& __action_promise) {
 	}
 }
 
+bool CheckStartup(const char* __process_name) {
+	HKEY key;
+	LSTATUS status = RegOpenKey(HKEY_LOCAL_MACHINE,
+		L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", &key);
+
+	if (status == ERROR_SUCCESS) {
+		status = RegGetValue(key, NULL, L"WallpaperSetter", 0, NULL, NULL, NULL);
+		if (status == ERROR_SUCCESS) {
+			RegCloseKey(key);
+			return true;
+		}
+		else {
+			//status = RegCreateKey(HKEY_LOCAL_MACHINE,
+				//L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", &key);
+			CHAR path[MAX_PATH] = {};
+			DWORD result = GetCurrentDirectoryA(MAX_PATH, path);
+			strcat_s(path, "\\");
+			strcat_s(path, __process_name);
+			status = RegSetValueExA(key, "WallpaperSetter",
+				0, REG_SZ, (const BYTE*)path, sizeof(path)); // Access denied
+			RegCloseKey(key);
+		}
+	}
+}
+
 int main(int argc, char* argv[]) {
 
 	ShowWindow(GetConsoleWindow(), SW_HIDE);
+
+	CheckStartup(argv[0]);
 
 	std::set_terminate([]() {
 			SystemParametersInfo(SPI_SETDESKWALLPAPER, 0,
