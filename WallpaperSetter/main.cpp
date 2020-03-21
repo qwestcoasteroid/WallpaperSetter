@@ -70,6 +70,8 @@ void CommandHandler(std::promise<Action>& __action_promise) {
 
 int main(int argc, char* argv[]) {
 
+	ShowWindow(GetConsoleWindow(), SW_HIDE);
+
 	std::set_terminate([]() {
 			SystemParametersInfo(SPI_SETDESKWALLPAPER, 0,
 				default_file_path, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
