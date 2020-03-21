@@ -30,3 +30,17 @@
 *.exe
 *.out
 *.app
+*.db
+*.opendb
+*.ipch
+*.ilk
+*.pdb
+*.sln
+*.idb
+*.log
+*.vcxproj
+*.tlog
+*.user
+*.filters
+.vs/WallpaperSetter/v16/.suo
+WallpaperSetter/Debug/WallpaperSetter.vcxproj.FileListAbsolute.txt
