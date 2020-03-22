@@ -6,20 +6,28 @@
 #include <vector>
 #include <future>
 
-WCHAR wallpaper_directory[] = L"C:\\Wallpapers";
+#include "timer.h"
+
+enum class Action : unsigned short { NONE, BREAK, CHANGE };
+
+WCHAR wallpaper_directory[] = L"D:\\Wallpapers";
 WCHAR wallpaper_mask[] = L"\\*.*g";
 WCHAR default_file_path[MAX_PATH] = L"C:\\Windows\\Web\\Wallpaper\\"
 	"Windows\\img0.jpg";
 WCHAR style[] = L"10";
 
+Action next_action = Action::NONE;
+
 bool set_changed = false;
 
 std::mutex wallpaper_set_mutex;
+std::mutex action_mutex;
 
-std::chrono::seconds sleep_duration(5);
+std::condition_variable action_condition;
+
+//std::chrono::seconds sleep_duration(5);
 //std::chrono::seconds wait_for_error(20);
-
-enum class Action : unsigned short { BREAK, CHANGE };
+std::chrono::milliseconds sleep_duration(5000);
 
 void DiscardStream(std::basic_ostringstream<WCHAR>& __stream) {
 	__stream.str(wallpaper_directory);
@@ -28,7 +36,7 @@ void DiscardStream(std::basic_ostringstream<WCHAR>& __stream) {
 }
 
 bool CreateWallpaperSet(std::vector<std::wstring>& __wallpaper_set) {
-	std::unique_lock<std::mutex> lock(wallpaper_set_mutex);
+	std::lock_guard<std::mutex> lock(wallpaper_set_mutex);
 
 	if (!__wallpaper_set.empty()) {
 		__wallpaper_set.clear();
@@ -105,70 +113,100 @@ void WallpaperSetChanging(std::vector<std::wstring>& __wallpaper_set) {
 	}
 }
 
-std::vector<std::wstring> CopySet(const std::vector<std::wstring>& __wallpapers) {
+/*std::vector<std::wstring> CopySet(const std::vector<std::wstring>& __wallpapers) {
 	std::lock_guard<std::mutex> lock(wallpaper_set_mutex);
 
 	set_changed = false;
 
 	return __wallpapers;
-}
+}*/
 
-void ChangeWallpaperLoop(const std::vector<std::wstring>& __wallpapers,
-	std::future<Action>& __action) {
-	
-	std::vector<std::wstring> temp_set = CopySet(__wallpapers);
-
-	BOOL result = FALSE;
+void CommandHandler() {
+	std::wstring command;
 
 	while (true) {
-		if (set_changed) {
-			temp_set = CopySet(__wallpapers);
+		std::wcin >> command;
+
+		std::unique_lock<std::mutex> lock(action_mutex);
+
+		if (command == L"exit") {
+			next_action = Action::BREAK;
+		}
+		else if (command == L"change") {
+			next_action = Action::CHANGE;
+		}
+		else {
+			next_action = Action::NONE;
 		}
 
-		for (const auto& i : temp_set) {
+		action_condition.notify_one();
+	}
+}
+
+void ChangeWallpaperLoop(const std::vector<std::wstring>& __wallpapers) {
+
+	BOOL result = FALSE;
+	HANDLE file = NULL;
+
+	Timer timer;
+
+	while (true) {
+		timer.Reset();
+
+		for (const auto& i : __wallpapers) {
+			std::unique_lock<std::mutex> lock(wallpaper_set_mutex);
+			
+			if (set_changed) {
+				set_changed = false;
+				break;
+			}
+			
+			file = CreateFile((LPCWSTR)i.c_str(), 0, 0, NULL,
+				OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			
+			if (file == INVALID_HANDLE_VALUE) {
+				break;
+			}
 			result = SystemParametersInfo(SPI_SETDESKWALLPAPER, 0,
 				 (PVOID)i.c_str(), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+
+			CloseHandle(file);
+
+			lock.unlock();
 
 			if (result == FALSE) {
 				std::wcerr << L"Can't set the wallpaper!\n";
 				return;
 			}
 
-			if (__action.wait_for(sleep_duration) ==
-			  std::future_status::timeout) {
-				continue;
-			}
-			else {
-				switch (__action.get()) {
-				  case Action::BREAK:
-					return;
-				  case Action::CHANGE:
-					continue;
-				  default:
+			std::unique_lock<std::mutex> action_lock(action_mutex);
+
+			/*std::chrono::system_clock::time_point start =
+				std::chrono::system_clock::now();*/
+
+			timer.Start();
+
+			action_condition.wait_for(action_lock, sleep_duration);
+
+			timer.Stop();
+
+			/*std::chrono::system_clock::time_point end =
+				std::chrono::system_clock::now();
+
+			std::chrono::system_clock::duration elapsed_time(end - start);*/
+
+			switch (next_action) {
+				case Action::NONE:
+					/*std::this_thread::sleep_for(sleep_duration -
+						std::chrono::duration_cast<std::chrono::milliseconds>(elapsed_time));*/
+					std::this_thread::sleep_for(sleep_duration - timer.ElapsedTime());
 					break;
-				}
+				case Action::BREAK:
+					return;
+				case Action::CHANGE:
+					continue;
 			}
 		}
-	}
-}
-
-void CommandHandler(std::promise<Action>& __action_promise) {
-	std::wstring command;
-
-	while (true) {
-		std::wcin >> command;
-
-		if (command == L"exit") {
-			__action_promise.set_value(Action::BREAK);
-			break;
-		}
-		else if (command == L"change") {
-			__action_promise.set_value(Action::CHANGE);
-		}
-		else {
-			std::wcerr << L"INVALID COMMAND!!!\n";
-		}
-		std::wcin.ignore(std::wcin.rdbuf()->in_avail());
 	}
 }
 
@@ -252,14 +290,14 @@ int main(int argc, char* argv[]) {
 		std::wcerr << L"Can't change wallpaper style!\n";
 	}
 
-	std::promise<Action> action_promise;
+	//std::promise<Action> action_promise;
 
-	std::future<Action> action_future = action_promise.get_future();
+	//std::future<Action> action_future = action_promise.get_future();
 
 	std::future<void> wallpaper_error = std::async(std::launch::async,
-		ChangeWallpaperLoop, std::cref(wallpapers), std::ref(action_future));
+		ChangeWallpaperLoop, std::cref(wallpapers));
 
-	std::thread command_handler(CommandHandler, std::ref(action_promise));
+	std::thread command_handler(CommandHandler);
 	std::thread set_changing(WallpaperSetChanging, std::ref(wallpapers));
 
 	command_handler.detach();
