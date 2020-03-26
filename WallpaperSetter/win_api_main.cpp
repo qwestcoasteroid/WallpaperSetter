@@ -1,3 +1,7 @@
+#pragma comment(linker,"\"/manifestdependency:type='win32' \
+name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+
 #include <Windows.h>
 
 #include <iostream>
@@ -56,10 +60,11 @@ bool ModifyWallpaperSet(set_type& __wallpaper_set,
 
 	std::basic_ostringstream<WCHAR> file_full_path;
 
-	FILE_NOTIFY_INFORMATION* file_info = (PFILE_NOTIFY_INFORMATION)__buffer;
+	FILE_NOTIFY_INFORMATION* file_info =
+		reinterpret_cast<PFILE_NOTIFY_INFORMATION>(__buffer);
 
-	DWORD offset;
-	WCHAR file[MAX_PATH] = {};
+	DWORD offset{};
+	WCHAR file[MAX_PATH]{};
 
 	do {
 		offset = file_info->NextEntryOffset;
@@ -72,14 +77,19 @@ bool ModifyWallpaperSet(set_type& __wallpaper_set,
 
 		switch (file_info->Action) {
 			case FILE_ACTION_REMOVED:
-				__wallpaper_set.erase(file_full_path.str());
+            {
+                __wallpaper_set.erase(file_full_path.str());
 				break;
+            }
 			case FILE_ACTION_ADDED:
-				__wallpaper_set.insert(file_full_path.str());
+            {
+                __wallpaper_set.insert(file_full_path.str());
 				break;
+            }			
 		}
 
-		file_info = (PFILE_NOTIFY_INFORMATION)((PBYTE)file_info + offset);
+		file_info = reinterpret_cast<PFILE_NOTIFY_INFORMATION>
+			((reinterpret_cast<PBYTE>(file_info) + offset));
 
 		memset(file, 0, sizeof(file));
 
@@ -97,9 +107,9 @@ bool CreateWallpaperSet(set_type& __wallpaper_set) {
 
 	file_full_path << wallpaper_mask;
 
-	WIN32_FIND_DATAW file_data = {};
+	WIN32_FIND_DATAW file_data{};
 
-	HANDLE file = NULL;
+	HANDLE file{};
 
 	file = FindFirstFileW(file_full_path.str().c_str(), &file_data);
 
@@ -128,8 +138,8 @@ bool CreateWallpaperSet(set_type& __wallpaper_set) {
 }
 
 void WallpaperSetChanging(set_type& __wallpaper_set) {
-	static DWORD buffer[4096] = {};
-	static DWORD bytes;
+	static DWORD buffer[4096]{};
+	static DWORD bytes{};
 
 	HANDLE handle = CreateFileW(wallpaper_directory, GENERIC_READ,
 		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
@@ -194,9 +204,9 @@ void CommandHandler() {
 	}
 }
 
-void ChangeWallpaperLoop(const set_type& __wallpapers) {
+void ChangeWallpaperLoop(const set_type& __wallpapers, HWND __hWnd) {
 	BOOL result = FALSE;
-	HANDLE file = NULL;
+	HANDLE file{};
 
 	Timer timer;
 
@@ -255,19 +265,30 @@ void ChangeWallpaperLoop(const set_type& __wallpapers) {
 
 			std::chrono::system_clock::duration elapsed_time(end - start);*/
 		}
-		
+
 		if (action_status.is_valid) {
 			switch (action_status.next_action) {
 				case Action::NONE:
-					/*std::this_thread::sleep_for(sleep_duration -
+                {
+                    /*std::this_thread::sleep_for(sleep_duration -
 						std::chrono::duration_cast<std::chrono::milliseconds>(elapsed_time));*/
 					std::this_thread::sleep_for(sleep_duration -
 						std::chrono::milliseconds(timer.ElapsedTime()));
 					break;
+                }
 				case Action::BREAK:
+                {
+                    LRESULT result = SendMessageW(__hWnd, WM_DESTROY, 0, 0);
+                    if (result != ERROR_SUCCESS) {
+                        MessageBoxW(__hWnd, L"Unable to terminate program!",
+                            L"Error", MB_ICONERROR);
+                    }
 					return;
+                }
 				case Action::CHANGE:
-					break;
+                {
+                    break;
+                }
 			}
 			action_status.is_valid = false;
 		}
@@ -289,7 +310,7 @@ void ChangeWallpaperLoop(const set_type& __wallpapers) {
 		}
 
 	} while (iter != __wallpapers.cend() ? true :
-		(iter = __wallpapers.cbegin()) == __wallpapers.cend());
+		(iter = __wallpapers.cbegin()) == iter);
 }
 
 /*bool CheckStartup(const char* __process_name) {
@@ -319,7 +340,7 @@ void ChangeWallpaperLoop(const set_type& __wallpapers) {
 }*/
 
 bool SetWallpaperStyle(LPCWSTR __style, DWORD __size) {
-	HKEY key = NULL;
+	HKEY key{};
 
 	LSTATUS status = RegOpenKeyW(HKEY_CURRENT_USER, NULL, &key);
 
@@ -351,46 +372,113 @@ bool SetWallpaperStyle(LPCWSTR __style, DWORD __size) {
 	return true;
 }
 
-int main(int argc, char* argv[]) {
-	//ShowWindow(GetConsoleWindow(), SW_HIDE);
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR szCmdLine, int nCmdShow) {
+    set_type wallpapers;
 
-	//CheckStartup(argv[0]);
-
-	std::set_terminate([]() {
-			SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0,
-				default_file_path, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-			std::abort();
-		});
-
-	set_type wallpapers;
-
-	CreateWallpaperSet(wallpapers);
+    CreateWallpaperSet(wallpapers);
 
 	bool is_set = SetWallpaperStyle(style, sizeof(style));
 
-	if (!is_set) {
-		std::wcerr << L"Can't change wallpaper style!\n";
+    MSG message{};
+    HWND window_handle{};
+
+    int window_width = 300;
+    int window_height = 200;
+    int window_x = GetSystemMetrics(SM_CXSCREEN) / 2 - window_width / 2;
+    int window_y = GetSystemMetrics(SM_CYSCREEN) / 2 - window_height / 2;
+
+    WNDCLASSEXW window_class{};
+    
+    window_class.cbSize = sizeof(WNDCLASSEXW);
+    window_class.cbClsExtra = 0;
+    window_class.cbWndExtra = 0;
+    window_class.hbrBackground = static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
+    window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    window_class.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    window_class.hIconSm = LoadIconW(nullptr, IDI_APPLICATION);
+    window_class.hInstance = hInstance;
+    window_class.lpfnWndProc = [](HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) -> LRESULT {
+        switch (uMsg) {
+            case WM_CREATE:
+            {
+                HWND change_button = CreateWindowW(L"BUTTON",
+                    L"Change Wallpaper", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                    300 / 2 - 200 / 2, 20, 200, 50,
+                    hWnd, reinterpret_cast<HMENU>(1), nullptr, nullptr);
+                HWND exit_button = CreateWindowW(L"BUTTON",
+                    L"Exit", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                    300 / 2 - 200 / 2, 90, 200, 50, hWnd, reinterpret_cast<HMENU>(2),
+                    nullptr, nullptr);
+                return 0;
+            }
+            case WM_COMMAND:
+            {
+                std::unique_lock<std::mutex> lock(action_mutex);
+                switch (LOWORD(wParam)) {
+                    case 1:
+                    {
+                        action_status.next_action = Action::CHANGE;
+                        break;
+                    }
+                    case 2:
+                    {
+                        action_status.next_action = Action::BREAK;
+                        break;
+                    }
+                    default:
+                    {
+                        action_status.next_action = Action::NONE;
+                        break;
+                    }
+                }
+                action_status.is_valid = true;
+                action_condition.notify_one();
+                return 0;
+            }
+            case WM_DESTROY:
+            {
+                PostQuitMessage(EXIT_SUCCESS);
+                return 0;
+            }
+        }
+        return DefWindowProcW(hWnd, uMsg, wParam, lParam);
+    };
+    window_class.lpszClassName = L"WallpaperSetter";
+    window_class.lpszMenuName = nullptr;
+    window_class.style = CS_HREDRAW | CS_VREDRAW;
+
+    if (!RegisterClassExW(&window_class)) {
+        return GetLastError();
+    }
+
+    window_handle = CreateWindowW(window_class.lpszClassName,
+        L"Wallpaper Setter", 0, window_x, window_y,
+        window_width, window_height, nullptr, nullptr, hInstance, nullptr);
+
+    if (window_handle == INVALID_HANDLE_VALUE) {
+        return EXIT_FAILURE;
+    }
+
+    ShowWindow(window_handle, nCmdShow);
+    UpdateWindow(window_handle);
+
+    if (!is_set) {
+        MessageBoxW(window_handle, L"Can't change wallpaper style!",
+            L"Info", MB_ICONINFORMATION);
 	}
 
-	//std::promise<Action> action_promise;
-
-	//std::future<Action> action_future = action_promise.get_future();
-
-	std::future<void> wallpaper_error = std::async(std::launch::async,
-		ChangeWallpaperLoop, std::cref(wallpapers));
-
-	std::thread command_handler(CommandHandler);
+    std::thread wallpaper_loop(ChangeWallpaperLoop, std::cref(wallpapers), window_handle);
+	//std::thread command_handler(CommandHandler);
 	std::thread set_changing(WallpaperSetChanging, std::ref(wallpapers));
 
-	command_handler.detach();
+    wallpaper_loop.detach();
+	//command_handler.detach();
 	set_changing.detach();
 
-	/*std::thread wallpaper_loop(ChangeWallpaperLoop,
-		std::cref(wallpapers), std::ref(action_future));*/
+    while (GetMessageW(&message, nullptr, 0, 0)) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
 
-	wallpaper_error.wait();
-
-	//wallpaper_loop.join();
-
-	return 0;
+    return static_cast<int>(message.wParam);
 }
