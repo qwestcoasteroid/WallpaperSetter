@@ -103,7 +103,7 @@ bool ModifyWallpaperSet(set_type& __wallpaper_set,
 	FILE_NOTIFY_INFORMATION* file_info =
 		reinterpret_cast<PFILE_NOTIFY_INFORMATION>(__buffer);
 
-	DWORD offset;
+	DWORD offset = 0;
 	WCHAR file[MAX_PATH] = {};
 
 	DWORD wait_result = WaitForSingleObject(wallpaper_set_mutex, INFINITE);
@@ -183,8 +183,8 @@ bool CreateWallpaperSet(set_type& __wallpaper_set) {
 
 DWORD WINAPI WallpaperSetChanging(PVOID __wallpaper_set) {
 	static DWORD buffer[4096] = {};
-	static DWORD bytes;
-	DWORD wait_result;
+	DWORD bytes = 0;
+	DWORD wait_result = 0;
 	set_type *wallpapers = static_cast<set_type *>(__wallpaper_set);
 
 	HANDLE handle = CreateFileW(wallpaper_directory, GENERIC_READ,
@@ -284,7 +284,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 	set_type::const_iterator iter = wallpapers->cbegin();
 
 	do {
-		DWORD wait_result;
+		DWORD wait_result = 0;
 
 		wait_result = WaitForSingleObject(wallpaper_set_mutex, INFINITE);
 		//std::unique_lock<std::mutex> wallpaper_lock(wallpaper_set_mutex);
@@ -322,7 +322,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 			break;
 		}
 
-		file = CreateFileW(reinterpret_cast<LPCWSTR>(iter->c_str()), GENERIC_READ,
+		file = CreateFileW(static_cast<LPCWSTR>(iter->c_str()), GENERIC_READ,
 			FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
 
 		if (file == INVALID_HANDLE_VALUE) {
@@ -332,7 +332,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 		//timer.Start();
 
 		result = SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0,
-			reinterpret_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
+			static_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
 			/*SPIF_UPDATEINIFILE | */SPIF_SENDCHANGE);
 
 		//timer.Stop();
@@ -387,7 +387,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 					break;
 				case Action::BREAK:
 					result = SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0,
-						reinterpret_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
+						static_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
 						SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
 
                     lresult = SendMessageW(main_window, WM_DESTROY, 0, 0);
@@ -396,6 +396,8 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
                         MessageBoxW(main_window, L"Unable to terminate program!",
                             L"Error", MB_ICONERROR);
                     }
+
+					LeaveCriticalSection(&action_section);
 
 					return 0;
 				case Action::CHANGE:
@@ -429,7 +431,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 			++iter;
 		}
 
-		ReleaseMutex(wallpaper_set_mutex);
+		ReleaseMutex(wallpaper_set_mutex); // Need to move somewhere else...
 
 	} while (iter != wallpapers->cend() ? true :
 		(iter = wallpapers->cbegin()) == wallpapers->cbegin());
@@ -483,7 +485,7 @@ bool SetWallpaperStyle(LPCWSTR __style, DWORD __size) {
 	}
 
 	status = RegSetValueExW(key, L"WallpaperStyle", 0, REG_SZ,
-		reinterpret_cast<CONST BYTE*>(__style), sizeof(__style));
+		reinterpret_cast<const BYTE *>(__style), sizeof(__style));
 
 	if (status != ERROR_SUCCESS) {
 		std::wcerr << L"Can't get access to 'WallpaperStyle'"
@@ -496,7 +498,7 @@ bool SetWallpaperStyle(LPCWSTR __style, DWORD __size) {
 	return true;
 }
 
-LRESULT window_procedure(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+LRESULT WINAPI window_procedure(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	switch (uMsg) {
 		case WM_CREATE:
 			CreateWindowElements(hWnd);
@@ -588,7 +590,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine
     window_class.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     window_class.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
     window_class.hInstance = hInstance;
-    window_class.lpfnWndProc = reinterpret_cast<WNDPROC>(window_procedure);
+    window_class.lpfnWndProc = static_cast<WNDPROC>(window_procedure);
     window_class.lpszClassName = L"WallpaperSetter";
     window_class.lpszMenuName = nullptr;
     window_class.style = CS_HREDRAW | CS_VREDRAW;
@@ -616,11 +618,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine
 	HANDLE threads[2] = {};
 
 	threads[0] = CreateThread(NULL, 0, ChangeWallpaperLoop,
-		reinterpret_cast<PVOID>(&wallpapers), 0, NULL);
+		static_cast<PVOID>(&wallpapers), 0, NULL);
     //std::thread wallpaper_loop(ChangeWallpaperLoop);
 	//std::thread command_handler(CommandHandler);
 	threads[1] = CreateThread(NULL, 0, WallpaperSetChanging,
-		reinterpret_cast<PVOID>(&wallpapers), 0, NULL);
+		static_cast<PVOID>(&wallpapers), 0, NULL);
 	//std::thread set_changing(WallpaperSetChanging);
 
     //wallpaper_loop.detach();

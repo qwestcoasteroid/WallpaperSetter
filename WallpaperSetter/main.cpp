@@ -56,7 +56,7 @@ bool ModifyWallpaperSet(set_type& __wallpaper_set,
 	FILE_NOTIFY_INFORMATION* file_info =
 		reinterpret_cast<PFILE_NOTIFY_INFORMATION>(__buffer);
 
-	DWORD offset;
+	DWORD offset = 0;
 	WCHAR file[MAX_PATH] = {};
 
 	DWORD wait_result = WaitForSingleObject(wallpaper_set_mutex, INFINITE);
@@ -132,8 +132,8 @@ bool CreateWallpaperSet(set_type& __wallpaper_set) {
 
 DWORD WINAPI WallpaperSetChanging(PVOID __wallpaper_set) {
 	static DWORD buffer[4096] = {};
-	static DWORD bytes;
-	DWORD wait_result;
+	DWORD bytes = 0;
+	DWORD wait_result = 0;
 	set_type *wallpapers = static_cast<set_type *>(__wallpaper_set);
 
 	HANDLE handle = CreateFileW(wallpaper_directory, GENERIC_READ,
@@ -232,7 +232,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 	set_type::const_iterator iter = wallpapers->cbegin();
 	
 	do {
-		DWORD wait_result;
+		DWORD wait_result = 0;
 
 		wait_result = WaitForSingleObject(wallpaper_set_mutex, INFINITE);
 		
@@ -265,7 +265,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 			break;
 		}
 		
-		file = CreateFileW((LPCWSTR)(*iter).c_str(), GENERIC_READ,
+		file = CreateFileW(static_cast<LPCWSTR>(iter->c_str()), GENERIC_READ,
 			FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
 		
 		if (file == INVALID_HANDLE_VALUE) {
@@ -275,7 +275,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 		//std::wcout << iter->c_str() << std::endl;
 
 		result = SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0,
-			reinterpret_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
+			static_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
 			/*SPIF_UPDATEINIFILE | */SPIF_SENDCHANGE);
 
 		last_applied = *iter;
@@ -323,8 +323,10 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 					break;
 				case Action::BREAK:
 					result = SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0,
-						reinterpret_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
+						static_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
 						SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+
+					LeaveCriticalSection(&action_section);
 
 					return 0;
 				case Action::CHANGE:
@@ -357,7 +359,7 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 			++iter;
 		}
 
-		ReleaseMutex(wallpaper_set_mutex);
+		ReleaseMutex(wallpaper_set_mutex); // Need to move somewhere else...
 
 	} while (iter != wallpapers->cend() ? true :
 		(iter = wallpapers->cbegin()) == wallpapers->cbegin());
@@ -411,7 +413,7 @@ bool SetWallpaperStyle(LPCWSTR __style, DWORD __size) {
 	}
 
 	status = RegSetValueExW(key, L"WallpaperStyle", 0, REG_SZ,
-		reinterpret_cast<CONST BYTE*>(__style), sizeof(__style));
+		reinterpret_cast<const BYTE *>(__style), sizeof(__style));
 
 	if (status != ERROR_SUCCESS) {
 		std::wcerr << L"Can't get access to 'WallpaperStyle'"
