@@ -42,13 +42,6 @@ ActionStatus action_status;
 
 bool set_changed = false;
 
-/*std::mutex wallpaper_set_mutex;
-std::mutex action_mutex;
-std::mutex empty_set_mutex;
-
-std::condition_variable action_condition;
-std::condition_variable empty_set_condition;*/
-
 HANDLE wallpaper_set_mutex;
 CRITICAL_SECTION action_section;
 CRITICAL_SECTION empty_set_section;
@@ -56,8 +49,6 @@ CRITICAL_SECTION empty_set_section;
 CONDITION_VARIABLE action_condition;
 CONDITION_VARIABLE empty_set_condition;
 
-//std::chrono::seconds sleep_duration(5);
-//std::chrono::seconds wait_for_error(20);
 std::chrono::milliseconds sleep_duration(5000);
 
 HWND main_window;
@@ -72,19 +63,19 @@ void CreateWindowElements(HWND hWnd) {
 	window_elements.push_back(CreateWindowW(L"EDIT", L"Wallpapers Directory",
 		WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_CENTER | WS_BORDER,
 		300 / 2 - 200 / 2, 20, 200, 20, hWnd, reinterpret_cast<HMENU>(3),
-		nullptr, nullptr));
+		NULL, NULL));
 	window_elements.push_back(CreateWindowW(L"BUTTON", L"Start/Stop",
 		WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
 		300 / 2 - 150 / 2, 90, 150, 50, hWnd, reinterpret_cast<HMENU>(4),
-		nullptr, nullptr));
+		NULL, NULL));
 	window_elements.push_back(CreateWindowW(L"BUTTON",
 		L"Change Wallpaper", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
 		300 / 2 - 200 / 2, 160, 200, 50,
-		hWnd, reinterpret_cast<HMENU>(1), nullptr, nullptr));
+		hWnd, reinterpret_cast<HMENU>(1), NULL, NULL));
 	window_elements.push_back(CreateWindowW(L"BUTTON",
 		L"Exit", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
 		300 / 2 - 200 / 2, 230, 200, 50, hWnd, reinterpret_cast<HMENU>(2),
-		nullptr, nullptr));
+		NULL, NULL));
 }
 
 void DiscardStream(std::wostringstream& __stream) {
@@ -96,11 +87,9 @@ void DiscardStream(std::wostringstream& __stream) {
 bool ModifyWallpaperSet(set_type& __wallpaper_set,
 	CONST PDWORD __buffer, DWORD __size) {
 
-	//std::lock_guard<std::mutex> lock(wallpaper_set_mutex);
-
 	std::wostringstream file_full_path;
 	
-	FILE_NOTIFY_INFORMATION* file_info =
+	FILE_NOTIFY_INFORMATION *file_info =
 		reinterpret_cast<PFILE_NOTIFY_INFORMATION>(__buffer);
 
 	DWORD offset = 0;
@@ -170,7 +159,7 @@ bool CreateWallpaperSet(set_type& __wallpaper_set) {
 
 	__wallpaper_set.insert(str_stream.str());
 
-	while (FindNextFileW(file, &file_data) != 0) {
+	while (FindNextFileW(file, &file_data) != FALSE) {
 		DiscardStream(str_stream);
 		str_stream << file_data.cFileName;
 		__wallpaper_set.insert(str_stream.str());
@@ -211,30 +200,19 @@ DWORD WINAPI WallpaperSetChanging(PVOID __wallpaper_set) {
 				return GetLastError();
 		}
 
-		//std::lock_guard<std::mutex> lock(wallpaper_set_mutex);
 		EnterCriticalSection(&empty_set_section);
-		//std::unique_lock<std::mutex> empty_set_lock(empty_set_mutex);
 
 		ModifyWallpaperSet(*wallpapers, buffer, bytes);
 
 		LeaveCriticalSection(&empty_set_section);
 
 		WakeConditionVariable(&empty_set_condition);
-		//empty_set_condition.notify_one();
 	}
 
 	CloseHandle(handle);
 
 	return 0;
 }
-
-/*set_type CopySet(const set_type& __wallpapers) {
-	std::lock_guard<std::mutex> lock(wallpaper_set_mutex);
-
-	set_changed = false;
-
-	return __wallpapers;
-}*/
 
 DWORD WINAPI CommandHandler(PVOID __arg) {
 	UNREFERENCED_PARAMETER(__arg);
@@ -247,7 +225,6 @@ DWORD WINAPI CommandHandler(PVOID __arg) {
 		std::wcin >> command;
 
 		EnterCriticalSection(&action_section);
-		//std::unique_lock<std::mutex> lock(action_mutex);
 
 		if (command == L"exit") {
 			action_status.next_action = Action::BREAK;
@@ -265,7 +242,6 @@ DWORD WINAPI CommandHandler(PVOID __arg) {
 		LeaveCriticalSection(&action_section);
 
 		WakeConditionVariable(&action_condition);
-		//action_condition.notify_one();
 
 		std::wcin.ignore(std::wcin.rdbuf()->in_avail());
 	}
@@ -287,7 +263,6 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 		DWORD wait_result = 0;
 
 		wait_result = WaitForSingleObject(wallpaper_set_mutex, INFINITE);
-		//std::unique_lock<std::mutex> wallpaper_lock(wallpaper_set_mutex);
 
 		switch (wait_result) {
 			case WAIT_ABANDONED:
@@ -296,16 +271,12 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 
 		if (wallpapers->empty()) { // Blocks exit button
 			ReleaseMutex(wallpaper_set_mutex); // Error handle
-			//wallpaper_lock.unlock();
 
 			EnterCriticalSection(&empty_set_section);
-			//std::unique_lock<std::mutex> empty_set_lock(empty_set_mutex);
 			
 			SleepConditionVariableCS(&empty_set_condition, &empty_set_section, INFINITE);
-			//empty_set_condition.wait(empty_set_lock);
 
 			wait_result = WaitForSingleObject(wallpaper_set_mutex, INFINITE);
-			//wallpaper_lock.lock();
 
 			switch (wait_result) {
 				case WAIT_ABANDONED:
@@ -335,13 +306,9 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 			static_cast<PVOID>(const_cast<LPWSTR>(iter->c_str())),
 			/*SPIF_UPDATEINIFILE | */SPIF_SENDCHANGE);
 
-		//timer.Stop();
-
-		//char buf[10]{};
-
-		//MessageBoxA(main_window, itoa(timer.ElapsedTime(), buf, 10), "Time", MB_ICONINFORMATION);
-
 		last_applied = *iter;
+
+		ReleaseMutex(wallpaper_set_mutex);
 
 		CloseHandle(file);
 
@@ -349,29 +316,16 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 			std::wcerr << L"Can't set the wallpaper!\n";
 			return GetLastError();
 		}
-
-		ReleaseMutex(wallpaper_set_mutex);
-		//wallpaper_lock.unlock();
 		
 		EnterCriticalSection(&action_section);
-		//std::unique_lock<std::mutex> action_lock(action_mutex);
 
 		if (!action_status.is_valid) {
-			/*std::chrono::system_clock::time_point start =
-				std::chrono::system_clock::now();*/
-
 			timer.Start();
 			
 			SleepConditionVariableCS(&action_condition, &action_section,
 				sleep_duration.count());
-			//action_condition.wait_for(action_lock, sleep_duration);
 
 			timer.Stop();
-
-			/*std::chrono::system_clock::time_point end =
-				std::chrono::system_clock::now();
-
-			std::chrono::system_clock::duration elapsed_time(end - start);*/
 		}
 
 		if (action_status.is_valid) {
@@ -379,10 +333,6 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 
 			switch (action_status.next_action) {
 				case Action::NONE:
-                    /*std::this_thread::sleep_for(sleep_duration -
-						std::chrono::duration_cast<std::chrono::milliseconds>(elapsed_time));*/
-					/*std::this_thread::sleep_for(sleep_duration -
-						std::chrono::milliseconds(timer.ElapsedTime()));*/
 					Sleep(sleep_duration.count() - timer.ElapsedTime());
 					break;
 				case Action::BREAK:
@@ -415,7 +365,6 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 			case WAIT_ABANDONED:
 				return GetLastError();
 		}
-		//wallpaper_lock.lock();
 
 		if (set_changed) {
 			iter = wallpapers->find(last_applied);
@@ -438,32 +387,6 @@ DWORD WINAPI ChangeWallpaperLoop(PVOID __wallpapers) {
 
 	return 0;
 }
-
-/*bool CheckStartup(const char* __process_name) {
-	HKEY key;
-	LSTATUS status = RegOpenKey(HKEY_LOCAL_MACHINE,
-		L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", &key);
-
-	if (status == ERROR_SUCCESS) {
-		status = RegGetValue(key, NULL, L"WallpaperSetter", 0, NULL, NULL, NULL);
-		if (status == ERROR_SUCCESS) {
-			RegCloseKey(key);
-			return true;
-		}
-		else {
-			//status = RegCreateKey(HKEY_LOCAL_MACHINE,
-				//L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", &key);
-			CHAR path[MAX_PATH] = {};
-			DWORD result = GetCurrentDirectoryA(MAX_PATH, path);
-			strcat_s(path, "\\");
-			strcat_s(path, __process_name);
-			status = RegSetValueExA(key, "WallpaperSetter",
-				0, REG_SZ, (const BYTE*)path, sizeof(path)); // Access denied
-			RegCloseKey(key);
-		}
-	}
-	return true;
-}*/
 
 bool SetWallpaperStyle(LPCWSTR __style, DWORD __size) {
 	HKEY key = NULL;
@@ -507,7 +430,6 @@ LRESULT WINAPI window_procedure(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 			switch (LOWORD(wParam)) {
 				case 1:
 					EnterCriticalSection(&action_section);
-					//std::unique_lock<std::mutex> lock(action_mutex);
 					action_status.next_action = Action::CHANGE;
 					action_status.is_valid = true;
 					LeaveCriticalSection(&action_section);
@@ -515,12 +437,10 @@ LRESULT WINAPI window_procedure(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				case 2:
 					ShowWindow(main_window, SW_HIDE);
 					EnterCriticalSection(&action_section);
-					//std::unique_lock<std::mutex> lock(action_mutex);
 					action_status.next_action = Action::BREAK;
 					action_status.is_valid = true;
 					LeaveCriticalSection(&action_section);
 					WakeConditionVariable(&empty_set_condition);
-					//empty_set_condition.notify_one();
 					break;
 				case 3:
 					return 0;
@@ -540,7 +460,6 @@ LRESULT WINAPI window_procedure(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 					break;
 				default:
 					EnterCriticalSection(&action_section);
-					//std::unique_lock<std::mutex> lock(action_mutex);
 					action_status.next_action = Action::NONE;
 					action_status.is_valid = true;
 					LeaveCriticalSection(&action_section);
@@ -548,7 +467,6 @@ LRESULT WINAPI window_procedure(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 			}
 
 			WakeConditionVariable(&action_condition);
-			//action_condition.notify_one();
 			return 0;
 		case WM_DESTROY:
 			PostQuitMessage(EXIT_SUCCESS);
@@ -586,13 +504,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine
     window_class.cbClsExtra = 0;
     window_class.cbWndExtra = 0;
     window_class.hbrBackground = static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
-    window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    window_class.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
-    window_class.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
+    window_class.hCursor = LoadCursor(NULL, IDC_ARROW);
+    window_class.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    window_class.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
     window_class.hInstance = hInstance;
     window_class.lpfnWndProc = static_cast<WNDPROC>(window_procedure);
     window_class.lpszClassName = L"WallpaperSetter";
-    window_class.lpszMenuName = nullptr;
+    window_class.lpszMenuName = NULL;
     window_class.style = CS_HREDRAW | CS_VREDRAW;
 
     if (!RegisterClassExW(&window_class)) {
@@ -601,7 +519,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine
 
     main_window = CreateWindowW(window_class.lpszClassName,
         L"Wallpaper Setter", 0, window_x, window_y,
-        window_width, window_height, nullptr, nullptr, hInstance, nullptr);
+        window_width, window_height, NULL, NULL, hInstance, NULL);
 
     if (main_window == INVALID_HANDLE_VALUE) {
         return EXIT_FAILURE;
@@ -619,17 +537,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine
 
 	threads[0] = CreateThread(NULL, 0, ChangeWallpaperLoop,
 		static_cast<PVOID>(&wallpapers), 0, NULL);
-    //std::thread wallpaper_loop(ChangeWallpaperLoop);
-	//std::thread command_handler(CommandHandler);
 	threads[1] = CreateThread(NULL, 0, WallpaperSetChanging,
 		static_cast<PVOID>(&wallpapers), 0, NULL);
-	//std::thread set_changing(WallpaperSetChanging);
 
-    //wallpaper_loop.detach();
-	//command_handler.detach();
-	//set_changing.detach();
-
-    while (GetMessageW(&message, nullptr, 0, 0)) {
+    while (GetMessageW(&message, NULL, 0, 0)) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
