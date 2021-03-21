@@ -42,6 +42,4 @@
 *.tlog
 *.user
 *.filters
-.vs/WallpaperSetter/v16/.suo
-WallpaperSetter/Debug/WallpaperSetter.vcxproj.FileListAbsolute.txt
-.vscode/settings.json
+.vscode
