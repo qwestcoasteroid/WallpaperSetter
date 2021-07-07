@@ -1,1 +1,1 @@
-- [] Add linux compatibility using "inotify"
+- [ ] Add linux compatibility using "inotify"  
