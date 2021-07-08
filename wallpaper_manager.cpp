@@ -2,13 +2,79 @@
 
 #include <regex>
 #include <iostream>
+#include <thread>
+#include <mutex>
 
-VOID WINAPI ModifyWallpaperSet(CONST PDWORD __buffer,
-    std::vector<std::wstring> &__set,
-    std::vector<std::wstring>::iterator &__next) {
+#ifdef _WIN32
+#include <Windows.h>
+#elif defined(__linux__)
+
+#endif
+
+struct WallpaperManager::Impl {
+    std::mutex mutex;
+    std::vector<std::wstring> wallpaperSet;
+    std::vector<std::wstring>::iterator nextWallpaper;
+    std::wstring directory;
+};
+
+void ModifyWallpaperSet(const void* buffer,
+    std::vector<std::wstring>& set,
+    std::vector<std::wstring>::iterator& next);
+
+void MonitorDirectory(std::shared_ptr<WallpaperManager::Impl> pimpl);
+
+WallpaperManager::WallpaperManager(const std::filesystem::path &path) :
+    pimpl_(std::make_shared<Impl>()) {
+
+    std::regex regularExpression(R"(.*jpg|.*jpeg|.*png|.*bmp)",
+        std::regex_constants::extended);
+
+    for (const auto &entry : std::filesystem::directory_iterator(path)) {
+        if (entry.is_regular_file() &&
+            std::regex_match(entry.path().string(), regularExpression)) {
+
+            pimpl_->wallpaperSet.push_back(entry.path().filename().wstring());
+        }
+    }
+
+    for (const auto &i : pimpl_->wallpaperSet) {
+        std::wcout << i << std::endl;
+    }
+
+    pimpl_->nextWallpaper = pimpl_->wallpaperSet.begin();
+    pimpl_->directory = path.wstring() + L"\\";
+
+
+    std::thread monitorThread(MonitorDirectory, pimpl_);
+    monitorThread.detach();
+}
+
+std::wstring WallpaperManager::GetNextWallpaper() {
+    if (pimpl_->wallpaperSet.empty()) {
+        throw std::runtime_error("Wallpaper Set is empty!");
+    }
+
+    std::wstring result;
+
+    std::lock_guard<std::mutex> lock(pimpl_->mutex);
+
+    if (pimpl_->nextWallpaper == pimpl_->wallpaperSet.end()) {
+        pimpl_->nextWallpaper = pimpl_->wallpaperSet.begin();
+    }
+
+    result = *pimpl_->nextWallpaper++;
+
+    return pimpl_->directory + result;
+}
+
+#ifdef _WIN32
+void ModifyWallpaperSet(const void* buffer,
+    std::vector<std::wstring>& set,
+    std::vector<std::wstring>::iterator& next) {
 
     auto fileInformation =
-        reinterpret_cast<CONST PFILE_NOTIFY_INFORMATION>(__buffer);
+        reinterpret_cast<const FILE_NOTIFY_INFORMATION *>(buffer);
 
     DWORD offset{};
     WCHAR fileName[MAX_PATH]{};
@@ -18,100 +84,58 @@ VOID WINAPI ModifyWallpaperSet(CONST PDWORD __buffer,
         CopyMemory(fileName, fileInformation->FileName,
             fileInformation->FileNameLength);
 
-        auto oldNext = *__next;
+        auto oldNext = *next;
 
         // Need to find next wallpaper properly!
 
         switch (fileInformation->Action) {
         case FILE_ACTION_REMOVED:
-            __set.erase(std::find(__set.begin(), __set.end(), fileName));
+            set.erase(std::find(set.begin(), set.end(), fileName));
             break;
         case FILE_ACTION_ADDED:
-            __set.push_back(fileName);
+            set.push_back(fileName);
             break;
         }
 
-        __next = std::find(__set.begin(), __set.end(), oldNext);
+        next = std::find(set.begin(), set.end(), oldNext);
 
-        fileInformation = reinterpret_cast<CONST PFILE_NOTIFY_INFORMATION>(
-            reinterpret_cast<CONST PBYTE>(fileInformation) + offset);
+        fileInformation = reinterpret_cast<const FILE_NOTIFY_INFORMATION *>(
+            reinterpret_cast<const BYTE *>(fileInformation) + offset);
 
         ZeroMemory(fileName, sizeof(fileName));
 
     } while (offset);
 }
+#elif defined(__linux__)
 
-DWORD WINAPI MonitorDirectory(PVOID __manager) {
-    auto &manager = *reinterpret_cast<WallpaperManager *>(__manager);
+#else
+static_assert(false, "Unknown target OS!");
+#endif
 
+#ifdef _WIN32
+void MonitorDirectory(std::shared_ptr<WallpaperManager::Impl> pimpl) {
     static DWORD buffer[4096]{};
     DWORD bytes{};
     BOOL found{ TRUE };
 
-    HANDLE hDirectory = CreateFileW(manager.directory.c_str(), GENERIC_READ,
-		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
-		FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    HANDLE hDirectory = CreateFileW(pimpl->directory.c_str(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, NULL);
 
     while (true) {
         ReadDirectoryChangesW(hDirectory, buffer, sizeof(buffer),
             FALSE, FILE_NOTIFY_CHANGE_FILE_NAME, &bytes, NULL, NULL);
-        
-        WaitForSingleObject(manager.hMutex, INFINITE);
 
-        ModifyWallpaperSet(buffer, manager.wallpaperSet,
-            manager.nextWallpaper);
+        std::lock_guard<std::mutex> lock(pimpl->mutex);
 
-        ReleaseMutex(manager.hMutex);
+        ModifyWallpaperSet(buffer, pimpl->wallpaperSet,
+            pimpl->nextWallpaper);
     }
 
     CloseHandle(hDirectory);
-
-    return EXIT_SUCCESS;
 }
+#elif defined(__linux__)
 
-WallpaperManager::WallpaperManager(const std::filesystem::path &__path) {
-    std::regex regularExpression(R"(.*jpg|.*jpeg|.*png|.*bmp)",
-        std::regex_constants::extended);
-
-    for (const auto &entry : std::filesystem::directory_iterator(__path)) {
-        if (entry.is_regular_file() &&
-            std::regex_match(entry.path().string(), regularExpression)) {
-
-            wallpaperSet.push_back(entry.path().filename().wstring());
-        }
-    }
-
-    for (const auto &i : wallpaperSet) {
-        std::wcout << i << std::endl;
-    }
-
-    hMutex = CreateMutexA(NULL, FALSE, NULL);
-    nextWallpaper = wallpaperSet.begin();
-    directory = __path.wstring() + L"\\";
-
-    QueueUserWorkItem(MonitorDirectory, this, WT_EXECUTEDEFAULT);
-}
-
-std::wstring WallpaperManager::GetNextWallpaper() {
-    if (wallpaperSet.empty()) {
-        throw std::runtime_error("Wallpaper Set is empty!");
-    }
-
-    std::wstring result;
-
-    WaitForSingleObject(hMutex, INFINITE);
-
-    if (nextWallpaper == wallpaperSet.end()) {
-        nextWallpaper = wallpaperSet.begin();
-    }
-
-    result = *nextWallpaper++;
-
-    ReleaseMutex(hMutex);
-
-    return directory + result;
-}
-
-WallpaperManager::~WallpaperManager() {
-    CloseHandle(hMutex);
-}
+#else
+static_assert(false, "Unknown target OS!");
+#endif
