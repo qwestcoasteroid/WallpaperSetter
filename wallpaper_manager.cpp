@@ -8,7 +8,8 @@
 #ifdef _WIN32
 #include <Windows.h>
 #elif defined(__linux__)
-
+#include <sys/inotify.h>
+#include <limits.h>
 #endif
 
 struct WallpaperManager::Impl {
@@ -107,7 +108,26 @@ void ModifyWallpaperSet(const void* buffer,
     } while (offset);
 }
 #elif defined(__linux__)
+void ModifyWallpaperSet(const void* buffer,
+    std::vector<std::wstring>& set,
+    std::vector<std::wstring>::iterator& next) {
 
+    auto event = reinterpret_cast<const inotify_event *>(buffer);
+
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+    std::wstring fileName = converter.from_bytes(event->name);
+
+    auto oldNext = *next;
+
+    if (event->mask & IN_CREATE) {
+        set.push_back(fileName);
+    }
+    else if (event->mask & IN_DELETE) {
+        set.erase(std::find(set.begin(), set.end(), fileName));
+    }
+
+    next = std::find(set.begin(), set.end(), oldNext);
+}
 #else
 static_assert(false, "Unknown target OS!");
 #endif
@@ -135,7 +155,44 @@ void MonitorDirectory(std::shared_ptr<WallpaperManager::Impl> pimpl) {
     CloseHandle(hDirectory);
 }
 #elif defined(__linux__)
+void MonitorDirectory(std::shared_ptr<WallpaperManager::Impl> pimpl) {
+    static char buffer[sizeof(inotify_event) + MAX_NAME + 1]{};
 
+    int fileDescriptor = inotify_init();
+
+    if (fileDescriptor == -1) {
+        std::cerr << "Error initializing inotify!" << std::endl;
+        return;
+    }
+
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+    std::string directoryPath = converter.to_bytes(pimpl->directory);
+
+    int watchDescriptor = inotify_add_watch(fileDescriptor,
+        directoryPath.c_str(), IN_CREATE | IN_DELETE);
+
+    if (watchDescriptor == -1) {
+        std::cerr << "Error adding watch!" << std::endl;
+        close(fileDescriptor);
+        return;
+    }
+
+    while (true) {
+        int result = read(fileDescriptor, buffer, sizeof(buffer));
+
+        if (result == -1) {
+            std::cerr << "Error reading inotify event!" << std::endl;
+            break;
+        }
+
+        std::lock_guard<std::mutex> lock(pimpl->mutex);
+
+        ModifyWallpaperSet(buffer, pimpl->wallpaperSet, pimpl->nextWallpaper);
+    }
+
+    inotify_rm_watch(fileDescriptor, watchDescriptor);
+    close(fileDescriptor);
+}
 #else
 static_assert(false, "Unknown target OS!");
 #endif
