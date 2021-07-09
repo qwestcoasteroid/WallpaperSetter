@@ -10,6 +10,7 @@
 #elif defined(__linux__)
 #include <sys/inotify.h>
 #include <limits.h>
+#include <unistd.h>
 #endif
 
 struct WallpaperManager::Impl {
